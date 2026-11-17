@@ -1,39 +1,58 @@
 pipeline {
-  agent any
-  options { timestamps() }
-  stages {
-    stage('Cloner le depot') {
-      steps {
-        git url: 'https://github.com/nourissaoui613-cell/mon-projet.git', branch: 'master'
-      }
+    agent any
+    options { timestamps() }
+
+    environment {
+        IMAGE = 'issaouinour/monapp'
+        TAG = "build-${env.BUILD_NUMBER}"
     }
-    stage('Etape 1 : Verification du depot') {
-      steps {
-        bat 'echo === Etape 1 : Verification du depot ==='
-        bat 'git status'
-      }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                bat 'docker version'
+                bat "docker build -t %IMAGE%:%TAG% ."
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                bat """
+                    docker rm -f monapp_test 2>nul || ver > nul
+                    docker run -d --name monapp_test -p 8081:80 %IMAGE%:%TAG%
+                    ping -n 3 127.0.0.1 > nul
+                    curl -I http://localhost:8081 | find "200 OK"
+                    docker rm -f monapp_test
+                """
+            }
+        }
+
+        stage('Push Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'USER',
+                    passwordVariable: 'PASS'
+                )]) {
+                    bat """
+                        echo %PASS% | docker login -u %USER% --password-stdin
+                        docker tag %IMAGE%:%TAG% %IMAGE%:latest
+                        docker push %IMAGE%:%TAG%
+                        docker push %IMAGE%:latest
+                    """
+                }
+            }
+        }
     }
-    stage('Etape 2 : Afficher le contenu du projet') {
-      steps {
-        bat 'echo === Etape 2 : Afficher le contenu du projet ==='
-        bat 'dir'
-      }
+
+    post {
+        success { echo 'Build+Test+Push OK' }
+        failure { echo 'Build/Tests/Push KO' }
     }
-    stage('Etape 3 : Simuler un deploiement local') {
-      steps {
-        bat 'echo === Etape 3 : Simuler un deploiement local ==='
-        bat 'echo Le fichier index.html est pret a etre affiche'
-      }
-    }
-    stage('Etape 4 : Fin du build') {
-      steps {
-        bat 'echo === Etape 4 : Fin du build ==='
-        bat 'echo SUCCESS'
-      }
-    }
-  }
-  post {
-    success { echo 'Build OK' }
-    failure { echo 'Build KO' }
-  }
 }
